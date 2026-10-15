@@ -1,3 +1,11 @@
+"""
+Inspects the parsed object data of a level from the dataset
+    - Parses level_data using the Kaitai Struct classes in level.py
+    - Object x and y values are raw units rather than tile indices
+"""
+
+
+# Imports
 from pprint import pprint
 from datasets import load_dataset
 from kaitaistruct import KaitaiStream
@@ -5,26 +13,41 @@ from io import BytesIO
 from level import Level
 import zlib
 
+
+"""
+Streams one level from the dataset and parses it
+    - streaming=True avoids downloading the full dataset
+    - level_data is zlib compressed, so it is decompressed before parsing
+"""
 ds = load_dataset("TheGreatRambler/mm2_level", streaming=True, split="train")
 level_data = next(iter(ds))["level_data"]
 level = Level(KaitaiStream(BytesIO(zlib.decompress(level_data))))
 
-# NOTE level.overworld.objects is a fixed size (limitation of Kaitai struct)
-# must iterate by object_count or null objects will be included
+
+"""
+Prints every object in the level overworld and collects the unique grid positions
+    - Used to check how object coordinates map onto the tile grid
+    - x_s and y_s hold the unique tile columns and rows that contain objects
+    - level.overworld.objects is a fixed size (limitation of Kaitai struct)
+    - Must iterate by object_count or null objects will be included
+"""
 x_s = set()
 y_s = set()
+
 for i in range(level.overworld.object_count):
     obj = level.overworld.objects[i]
-    
+
     # Printing level objects as dictionaries
-    # pprint(vars(obj))
-    # print("\n")
-    
+    pprint(vars(obj))
+    print("\n")
+
     # Printing basic level data
-    print("X: %d Y: %d ID: %s" % (obj.x, obj.y, obj.id))
-    
+    # print("X: %d Y: %d ID: %s" % (obj.x, obj.y, obj.id))
+
+    # Converting raw coordinates to tile indices (each tile is 160 pixels wide, offset by 80 to its center)
     x_s.add((obj.x + 80) / 160)
     y_s.add((obj.y + 80) / 160)
 
+# Printing the unique tile positions in order
 print(sorted(x_s))
 print(sorted(y_s))
