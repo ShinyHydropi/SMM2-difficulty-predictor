@@ -1,3 +1,4 @@
+from pprint import pprint
 from datasets import load_dataset
 from kaitaistruct import KaitaiStream
 from io import BytesIO
@@ -14,8 +15,16 @@ x_s = set()
 y_s = set()
 for i in range(level.overworld.object_count):
     obj = level.overworld.objects[i]
+    
+    # Printing level objects as dictionaries
+    # pprint(vars(obj))
+    # print("\n")
+    
+    # Printing basic level data
     print("X: %d Y: %d ID: %s" % (obj.x, obj.y, obj.id))
+    
     x_s.add((obj.x + 80) / 160)
     y_s.add((obj.y + 80) / 160)
+
 print(sorted(x_s))
 print(sorted(y_s))
