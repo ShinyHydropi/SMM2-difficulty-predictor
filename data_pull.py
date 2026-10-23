@@ -35,18 +35,18 @@ x_s = set()
 y_s = set()
 
 for i in range(level.overworld.object_count):
-    obj = level.overworld.objects[i]
+    object = level.overworld.objects[i]
 
     # Printing level objects as dictionaries
-    pprint(vars(obj))
+    pprint(vars(object))
     print("\n")
 
     # Printing basic level data
-    # print("X: %d Y: %d ID: %s" % (obj.x, obj.y, obj.id))
+    # print("X: %d Y: %d ID: %s" % (object.x, object.y, object.id))
 
     # Converting raw coordinates to tile indices (each tile is 160 pixels wide, offset by 80 to its center)
-    x_s.add((obj.x + 80) / 160)
-    y_s.add((obj.y + 80) / 160)
+    x_s.add((object.x + 80) / 160)
+    y_s.add((object.y + 80) / 160)
 
 # Printing the unique tile positions in order
 print(sorted(x_s))
