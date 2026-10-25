@@ -13,7 +13,7 @@ level_data = None
 for j in range(i):
     row = next(ds)
     level_data = row["level_data"]
-    if j == i:
+    if j == i - 1:
         level = Level(KaitaiStream(BytesIO(zlib.decompress(level_data))))
         bricks = level_to_input(level)[0][0, :, :]
         for r in reversed(bricks):
