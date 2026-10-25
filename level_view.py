@@ -3,7 +3,7 @@ from kaitaistruct import KaitaiStream
 from io import BytesIO
 from level import Level
 import zlib
-from level_tensor import level_to_input
+from data_processing.level_tensor import level_to_input
 
 
 ds = iter(load_dataset("TheGreatRambler/mm2_level", streaming=True, split="train"))
