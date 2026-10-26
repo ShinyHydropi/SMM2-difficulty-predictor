@@ -113,43 +113,44 @@ def map_to_tensor(level, area="overworld", height=None, width=None,
     return t
 
 def level_to_input(level: Level, pad: bool = False):
+    output = {}
     h, w = None, None
     if pad:
         h = 168
         w = 240
-    ow = map_to_tensor(level, width=w)
-    theme_ow = torch.zeros(10)
-    theme_ow[level.overworld.theme] = 1
-    night_ow = torch.tensor([1 if level.overworld.unk_flag == 1 else 0])
-    liquid_ow = torch.tensor(
+    output["ow"] = map_to_tensor(level, width=w)
+    output["theme_ow"] = torch.zeros(10)
+    output["theme_ow"][level.overworld.theme] = 1
+    output["night_ow"] = torch.tensor([1 if level.overworld.unk_flag == 1 else 0])
+    output["liquid_ow"] = torch.tensor(
         [level.overworld.liquid_start_height, level.overworld.liquid_end_height, 0, 0, 0, level.overworld.liquid_speed])
-    liquid_ow[level.overworld.liquid_mode + 2] = 1
-    autoscroll_ow = torch.zeros(5)
-    autoscroll_ow[level.overworld.autoscroll_type] = 1
-    clear_condition = torch.zeros(99)
-    clear_condition[level.clear_condition_category] = 1
-    clear_condition[level.clear_condition + 4] = 1
-    clear_condition[-1] = level.clear_condition_magnitude
-    gamestyle = torch.zeros(5)
-    gamestyle[list(Level.Gamestyle).index(level.gamestyle)] = 1
-    timer = torch.tensor([level.timer])
-    sw_hor = None
-    sw_vert = None
-    theme_sw = None
-    night_sw = None
-    liquid_sw = None
-    autoscroll_sw = None
+    output["liquid_ow"][level.overworld.liquid_mode + 2] = 1
+    output["autoscroll_ow"] = torch.zeros(5)
+    output["autoscroll_ow"][level.overworld.autoscroll_type] = 1
+    output["clear_condition"] = torch.zeros(99)
+    output["clear_condition"][level.clear_condition_category] = 1
+    output["clear_condition"][level.clear_condition + 4] = 1
+    output["clear_condition"][-1] = level.clear_condition_magnitude
+    output["gamestyle"] = torch.zeros(5)
+    output["gamestyle"][list(Level.Gamestyle).index(level.gamestyle)] = 1
+    output["timer"] = torch.tensor([level.timer])
+    output["sw_hor"] = None
+    output["sw_vert"] = None
+    output["theme_sw"] = None
+    output["night_sw"] = None
+    output["liquid_sw"] = None
+    output["autoscroll_sw"] = None
     if level.subworld is not None:
         if level.subworld.orientation == Level.Map.Orientation.horizontal:
-            sw_hor = map_to_tensor(level, "subworld", width=w)
+            output["sw_hor"] = map_to_tensor(level, "subworld", width=w)
         else:
-            sw_vert = map_to_tensor(level, "subworld", height=h)
-        liquid_sw = torch.tensor([level.subworld.liquid_start_height, level.subworld.liquid_end_height, 0, 0, 0,
+            output["sw_vert"] = map_to_tensor(level, "subworld", height=h)
+        output["liquid_sw"] = torch.tensor([level.subworld.liquid_start_height, level.subworld.liquid_end_height, 0, 0, 0,
                                   level.subworld.liquid_speed])
-        liquid_sw[level.subworld.liquid_mode + 2] = 1
-        autoscroll_sw = torch.zeros(5)
-        autoscroll_sw[level.subworld.autoscroll_type] = 1
-        theme_sw = torch.zeros(10)
-        theme_sw[level.subworld.theme] = 1
-        night_sw = torch.tensor([1 if level.subworld.unk_flag == 1 else 0])
-    return ow, theme_ow, night_ow, liquid_ow, autoscroll_ow, sw_hor, sw_vert, theme_sw, night_sw, liquid_sw, autoscroll_sw, clear_condition, gamestyle, timer
+        output["liquid_sw"][level.subworld.liquid_mode + 2] = 1
+        output["autoscroll_sw"] = torch.zeros(5)
+        output["autoscroll_sw"][level.subworld.autoscroll_type] = 1
+        output["theme_sw"] = torch.zeros(10)
+        output["theme_sw"][level.subworld.theme] = 1
+        output["night_sw"] = torch.tensor([1 if level.subworld.unk_flag == 1 else 0])
+    return output
