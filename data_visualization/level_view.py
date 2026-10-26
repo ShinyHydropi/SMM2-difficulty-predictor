@@ -15,7 +15,7 @@ for j in range(i):
     level_data = row["level_data"]
     if j == i - 1:
         level = Level(KaitaiStream(BytesIO(zlib.decompress(level_data))))
-        bricks = level_to_input(level)[0][0, :, :]
+        bricks = level_to_input(level)["ow"][0, :, :]
         for r in reversed(bricks):
             for tile in r:
                 if tile == 0:
