@@ -7,7 +7,7 @@ What every element stored in SMM2 level_data means for gameplay, as grid channel
 
 # Imports
 from enum import IntEnum
-from .levels import Level
+from level import Level
 
 
 ObjId = Level.Obj.ObjId
