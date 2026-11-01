@@ -1,3 +1,8 @@
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
 from datasets import load_dataset
 from kaitaistruct import KaitaiStream
 from io import BytesIO
