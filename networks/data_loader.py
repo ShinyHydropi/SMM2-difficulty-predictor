@@ -34,7 +34,7 @@ from data_processing.encoding import NUM_CH, PADDED_HEIGHT, PADDED_WIDTH, levelT
 # Constants
 # ---------------------------------
 # Files
-DATA_DIR = Path(__file__).resolve().parent.parent / "mm2_subset"
+DATA_DIR = Path(__file__).resolve().parent.parent/ "data_processing" / "mm2_subset"
 SPLITS = ("train", "val", "test")
 GRIDS_FILE = "grids.bin"
 INDEX_FILE = "index.npz"  # Written last, so its existence marks a finished cache
