@@ -6,13 +6,13 @@ Build a train/val/test Parquet subset of the Mario Maker 2 level dataset
     - Levels with a clear condition the encoder doesn't know are dropped (about 8% of levels, encoding.levelToInput can't read them)
     - Edit KEEP_COLUMNS to keep other fields
     - Run it from the repo root with:
-        python -m data_processing.build_subset --max-levels 100000 --min-attempts 500 --out-dir mm2_subset
+        python -m data_processing.build_subset --max-levels 100000 --min-attempts 500
     - Reload later with:
         from datasets import load_dataset
         ds = load_dataset("parquet", data_files={
-            "train": "mm2_subset/train.parquet",
-            "val": "mm2_subset/val.parquet",
-            "test": "mm2_subset/test.parquet"
+            "train": "data_processing/mm2_subset/train.parquet",
+            "val": "data_processing/mm2_subset/val.parquet",
+            "test": "data_processing/mm2_subset/test.parquet"
         })
 """
 
@@ -21,6 +21,7 @@ import argparse
 import hashlib
 import json
 import os
+from pathlib import Path
 import pyarrow as pa
 import pyarrow.parquet as pq
 from datasets import load_dataset
@@ -33,8 +34,10 @@ from .encoding import parse
 # ---------------------------------
 # Constants
 # ---------------------------------
+
 DATASET = "TheGreatRambler/mm2_level"
 KEEP_COLUMNS = ["data_id", "clear_rate", "attempts", "clears", "gamestyle", "level_data"]  # level_data is the raw bytes (the heavy part)
+OUTPUT_DIR = Path(__file__).resolve().parent / "mm2_subset"  # Default --out-dir
 SPLITS = ("train", "val", "test")
 PROGRESS_EVERY = 10_000  # Rows between progress prints
 
@@ -44,6 +47,7 @@ PROGRESS_EVERY = 10_000  # Rows between progress prints
 # ---------------------------------
 # hasKnownClearCondition
 # ---------------------------------
+
 def hasKnownClearCondition(row):
     """
     True if the level's clear condition is one the encoder can one-hot (Kaitai returns a plain int for unknown ones)
@@ -59,6 +63,7 @@ def hasKnownClearCondition(row):
 # ---------------------------------
 # assignSplit
 # ---------------------------------
+
 def assignSplit(dataId, seed, trainFraction, valFraction):
     """
     Deterministically map a level to train, val, or test with a stable hash
@@ -84,6 +89,7 @@ def assignSplit(dataId, seed, trainFraction, valFraction):
 # ---------------------------------
 # SplitWriter
 # ---------------------------------
+
 class SplitWriter:
     """Buffers rows and appends them to a Parquet file in chunks"""
 
@@ -124,6 +130,7 @@ class SplitWriter:
 # ---------------------------------
 # main
 # ---------------------------------
+
 def main():
     """
     Stream the dataset, keep the qualifying levels, and write the splits and metadata.json
@@ -132,7 +139,7 @@ def main():
         ValueError: If train and val fractions don't leave room for test
     """
     parser = argparse.ArgumentParser()
-    parser.add_argument("--out-dir", default="mm2_subset")
+    parser.add_argument("--out-dir", default=str(OUTPUT_DIR))
     parser.add_argument("--max-levels", type=int, default=100_000, help="Total levels to keep across all splits")
     parser.add_argument("--min-attempts", type=int, default=500, help="Drop levels with fewer attempts (clear rate is noisy)")
     parser.add_argument("--train-frac", type=float, default=0.8)

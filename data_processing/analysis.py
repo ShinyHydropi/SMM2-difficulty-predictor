@@ -40,6 +40,7 @@ from .encoding import (
 # ---------------------------------
 # Constants
 # ---------------------------------
+
 # Dataset and sampling
 DATASET = "TheGreatRambler/mm2_level"
 SAMPLE_SHARDS = 8
@@ -83,6 +84,7 @@ AREA_FIELDS = [
 # ---------------------------------
 # enumName
 # ---------------------------------
+
 def enumName(value):
     """
     Name of a Kaitai enum member, or the raw value when Kaitai returned a plain int
@@ -98,6 +100,7 @@ def enumName(value):
 # ---------------------------------
 # sampleRows
 # ---------------------------------
+
 def sampleRows(count, shards=SAMPLE_SHARDS):
     """
     Sample a streaming dataset evenly across its shards
@@ -125,6 +128,7 @@ def sampleRows(count, shards=SAMPLE_SHARDS):
 # ---------------------------------
 # Area and array accessors
 # ---------------------------------
+
 def areaSize(areaMap):
     """
     Area width and height in tiles
@@ -192,6 +196,7 @@ def clearPipes(areaMap):
 # ---------------------------------
 # footprint
 # ---------------------------------
+
 def footprint(obj):
     """
     Tile cells covered by an object's rectangular footprint
@@ -213,6 +218,7 @@ def footprint(obj):
 # ---------------------------------
 # IdStats
 # ---------------------------------
+
 class IdStats:
     """Running counts for one object ID across the sample"""
 
@@ -235,6 +241,7 @@ class IdStats:
 # ---------------------------------
 # inventory
 # ---------------------------------
+
 def inventory(rows):
     """
     Inventory every level element in a batch of dataset rows
@@ -297,7 +304,7 @@ def inventory(rows):
                     pipeCells[direction] += len(cells)
                     pipeOverlaps[direction] += sum(cell in groundCells for cell in cells)
                 elif obj.lid == -1 and obj.id not in SKIP_ANCHOR_CHECK:
-                    _checkAnchor(obj, entry, groundCells)
+                    checkAnchor(obj, entry, groundCells)
 
                 unclear = obj.id in UNIDENTIFIED or not isinstance(obj.id, ObjId)
                 if unclear and name not in saved:
@@ -305,7 +312,7 @@ def inventory(rows):
                     with open(OUTPUT_DIR / f"unidentified_{name}_{row['data_id']}.bcd", "wb") as file:
                         file.write(zlib.decompress(row["level_data"]))
 
-    _writeInventoryCsv(stats)
+    writeInventoryCsv(stats)
 
     seen = [objId.name for objId in ObjId if stats[objId.name].count]
     print(f"Levels: {len(dataIds)} (data_id {min(dataIds)} to {max(dataIds)})")
@@ -343,9 +350,10 @@ def inventory(rows):
 
 
 # ---------------------------------
-# _checkAnchor
+# checkAnchor
 # ---------------------------------
-def _checkAnchor(obj, entry, groundCells):
+
+def checkAnchor(obj, entry, groundCells):
     """
     Count how many of an object's cells land on ground under each x rule
 
@@ -369,9 +377,10 @@ def _checkAnchor(obj, entry, groundCells):
 
 
 # ---------------------------------
-# _writeInventoryCsv
+# writeInventoryCsv
 # ---------------------------------
-def _writeInventoryCsv(stats):
+
+def writeInventoryCsv(stats):
     """
     Write one row per object ID, all 133 first, then any unknown raw IDs
 
@@ -408,6 +417,7 @@ def _writeInventoryCsv(stats):
 # ---------------------------------
 # characteristics
 # ---------------------------------
+
 def characteristics(rows):
     """
     Write top-level characteristics for every qualifying row to output/level_characteristics.csv
@@ -430,7 +440,7 @@ def characteristics(rows):
                 skipped += 1
                 continue
 
-            record = _levelRecord(row)
+            record = levelRecord(row)
             if writer is None:
                 leaked = set(record) & set(LEAKAGE_COLUMNS)
                 if leaked:
@@ -450,9 +460,10 @@ def characteristics(rows):
 
 
 # ---------------------------------
-# _levelRecord
+# levelRecord
 # ---------------------------------
-def _levelRecord(row):
+
+def levelRecord(row):
     """
     One level's top-level characteristics as a flat dict
 
@@ -482,6 +493,7 @@ def _levelRecord(row):
 # ---------------------------------
 # showObjects
 # ---------------------------------
+
 def showObjects():
     """Print every overworld object of the first streamed level (raw units, 160 per tile, offset 80 to the tile center)"""
     level = parse(next(iter(sampleRows(1))))
@@ -501,6 +513,7 @@ def showObjects():
 # ---------------------------------
 # showMap
 # ---------------------------------
+
 def showMap(index=1):
     """
     Print the overworld SOLID channel of the Nth streamed level and save it as level<N>.bcd
@@ -524,6 +537,7 @@ def showMap(index=1):
 # ---------------------------------
 # Command line
 # ---------------------------------
+
 ROW_COMMANDS = {"inventory": inventory, "characteristics": characteristics}
 COMMANDS = {**ROW_COMMANDS, "objects": showObjects, "view": showMap}
 

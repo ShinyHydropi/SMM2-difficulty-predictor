@@ -20,6 +20,7 @@ from level import Level
 # ---------------------------------
 # Enum aliases and flag bits
 # ---------------------------------
+
 ObjId = Level.Obj.ObjId
 Gamestyle = Level.Gamestyle
 Theme = Level.Map.Theme
@@ -37,6 +38,7 @@ NO_CHILD = -1  # Value of cid when nothing is inside the object
 # ---------------------------------
 # Grid geometry
 # ---------------------------------
+
 NUM_CH = 12  # Number of channels
 NUM_OBJS = 133  # Size of the ObjId enum (IDs 0 to 132)
 TILE = 160  # Raw object units per tile
@@ -68,6 +70,7 @@ CLEAR_CONDITION_SIZE = 99  # 4 categories + 94 conditions + 1 magnitude (last sl
 # ---------------------------------
 # Channel
 # ---------------------------------
+
 class Channel(IntEnum):
     """
     Grid channels
@@ -95,6 +98,7 @@ class Channel(IntEnum):
 # ---------------------------------
 # Channel groups
 # ---------------------------------
+
 """
 Object ID to channel assignments
     - An ID can sit in more than one group (a launcher is SOLID and a HAZARD)
@@ -165,6 +169,7 @@ UNIDENTIFIED = [ObjId.cinobio, ObjId.stone, ObjId.cinobic]
 # ---------------------------------
 # Data-driven overrides
 # ---------------------------------
+
 """
 Overrides that come from the data itself
     - ALT_FORM_CHANNELS replace an ID's channels when its flag (or cflag, for contents) has ALT_FORM_BIT set
@@ -192,6 +197,7 @@ YOSHI_STYLES = {Gamestyle.smw, Gamestyle.nsmbw}  # The ksy's "nsmbw" is NSMBU
 # ---------------------------------
 # Channels outside the objects array
 # ---------------------------------
+
 """
 Channels for elements stored outside the objects array
     - Ground tiles live in map.ground in tile units and hold nearly all terrain
@@ -211,6 +217,7 @@ ICICLE_CHANNELS = {
 # ---------------------------------
 # UnknownObjectError
 # ---------------------------------
+
 class UnknownObjectError(ValueError):
     """Raised when a level contains an object ID missing from level.py's ObjId enum"""
 
@@ -218,9 +225,10 @@ class UnknownObjectError(ValueError):
 
 
 # ---------------------------------
-# _buildObjectChannels
+# buildObjectChannels
 # ---------------------------------
-def _buildObjectChannels():
+
+def buildObjectChannels():
     """
     Invert GROUPS into one lookup from object ID to its channels
 
@@ -243,7 +251,7 @@ def _buildObjectChannels():
     return {objId: frozenset(channels) for objId, channels in lookup.items()}
 
 
-OBJECT_CHANNELS = _buildObjectChannels()
+OBJECT_CHANNELS = buildObjectChannels()
 
 
 
@@ -251,6 +259,7 @@ OBJECT_CHANNELS = _buildObjectChannels()
 # ---------------------------------
 # channelsFor
 # ---------------------------------
+
 def channelsFor(obj, gamestyle, theme, night):
     """
     Channels a parsed object contributes to every cell it covers
@@ -281,6 +290,7 @@ def channelsFor(obj, gamestyle, theme, night):
 # ---------------------------------
 # elementChannels
 # ---------------------------------
+
 def elementChannels(rawId, flag, gamestyle, theme, night):
     """
     Channels for one object ID in its context, before contents and modifiers
@@ -318,6 +328,7 @@ def elementChannels(rawId, flag, gamestyle, theme, night):
 # ---------------------------------
 # parse
 # ---------------------------------
+
 def parse(row):
     """
     Decompress a dataset row's level_data and parse it into a Level
@@ -332,9 +343,10 @@ def parse(row):
 
 
 # ---------------------------------
-# _toInt
+# toInt
 # ---------------------------------
-def _toInt(value):
+
+def toInt(value):
     """
     Convert a Kaitai enum member or an int to a plain int
 
@@ -347,9 +359,10 @@ def _toInt(value):
 
 
 # ---------------------------------
-# _pipeCells
+# pipeCells
 # ---------------------------------
-def _pipeCells(col, row, length, direction):
+
+def pipeCells(col, row, length, direction):
     """
     Cells covered by a 2-thick pipe anchored at (col, row)
 
@@ -375,9 +388,10 @@ def _pipeCells(col, row, length, direction):
 
 
 # ---------------------------------
-# _fillRectangle
+# fillRectangle
 # ---------------------------------
-def _fillRectangle(grid, channels, colStart, colEnd, rowStart, rowEnd):
+
+def fillRectangle(grid, channels, colStart, colEnd, rowStart, rowEnd):
     """
     Set each channel to 1 on an inclusive rectangle, clipped to the grid
 
@@ -402,9 +416,10 @@ def _fillRectangle(grid, channels, colStart, colEnd, rowStart, rowEnd):
 
 
 # ---------------------------------
-# _paintLiquid
+# paintLiquid
 # ---------------------------------
-def _paintLiquid(grid, areaMap):
+
+def paintLiquid(grid, areaMap):
     """
     Paint the LIQUID channel from the area's liquid header fields
 
@@ -426,9 +441,10 @@ def _paintLiquid(grid, areaMap):
 
 
 # ---------------------------------
-# _paintInBounds
+# paintInBounds
 # ---------------------------------
-def _paintInBounds(grid, areaMap):
+
+def paintInBounds(grid, areaMap):
     """
     Paint IN_BOUNDS on every tile inside the area's boundary (padding stays 0)
 
@@ -444,9 +460,10 @@ def _paintInBounds(grid, areaMap):
 
 
 # ---------------------------------
-# _paintTerrain
+# paintTerrain
 # ---------------------------------
-def _paintTerrain(grid, level, areaMap, area, includeImplicitGround):
+
+def paintTerrain(grid, level, areaMap, area, includeImplicitGround):
     """
     Paint ground tiles, plus the start and goal ground drawn from the level header
 
@@ -458,22 +475,23 @@ def _paintTerrain(grid, level, areaMap, area, includeImplicitGround):
         includeImplicitGround: True paints the start and goal ground (overworld only)
     """
     for tile in areaMap.ground[:areaMap.ground_count]:
-        _fillRectangle(grid, GROUND_TILE_CHANNELS, tile.x, tile.x, tile.y, tile.y)  # Already 0-indexed tile coordinates
+        fillRectangle(grid, GROUND_TILE_CHANNELS, tile.x, tile.x, tile.y, tile.y)  # Already 0-indexed tile coordinates
 
     if includeImplicitGround and area == "overworld":
         # Start and goal ground come from the header, not the ground array (as Toost does)
         goalStart = int((level.goal_x - 5) / 10 + 0.5)
         goalEnd = int((level.goal_x - 5) / 10 + 9)
-        _fillRectangle(grid, GROUND_TILE_CHANNELS, goalStart, goalEnd, 0, level.goal_y - 1)
-        _fillRectangle(grid, GROUND_TILE_CHANNELS, 0, START_AREA_WIDTH - 1, 0, level.start_y - 1)
+        fillRectangle(grid, GROUND_TILE_CHANNELS, goalStart, goalEnd, 0, level.goal_y - 1)
+        fillRectangle(grid, GROUND_TILE_CHANNELS, 0, START_AREA_WIDTH - 1, 0, level.start_y - 1)
 
 
 
 
 # ---------------------------------
-# _paintClearPipes
+# paintClearPipes
 # ---------------------------------
-def _paintClearPipes(grid, areaMap):
+
+def paintClearPipes(grid, areaMap):
     """
     Paint every clear pipe segment from the clear_pipes array
 
@@ -483,16 +501,17 @@ def _paintClearPipes(grid, areaMap):
     """
     for pipe in areaMap.clear_pipes[:areaMap.clear_pipe_count]:
         for node in pipe.nodes[:pipe.node_count]:
-            direction = CLEAR_PIPE_DIRECTIONS[_toInt(node.direction)]
-            _fillRectangle(grid, CLEAR_PIPE_CHANNELS, *_pipeCells(node.x, node.y, node.height, direction))
+            direction = CLEAR_PIPE_DIRECTIONS[toInt(node.direction)]
+            fillRectangle(grid, CLEAR_PIPE_CHANNELS, *pipeCells(node.x, node.y, node.height, direction))
 
 
 
 
 # ---------------------------------
-# _paintIcicles
+# paintIcicles
 # ---------------------------------
-def _paintIcicles(grid, areaMap):
+
+def paintIcicles(grid, areaMap):
     """
     Paint every icicle from the icicles array (1 wide, 2 tall)
 
@@ -501,7 +520,7 @@ def _paintIcicles(grid, areaMap):
         areaMap: level.overworld or level.subworld
     """
     for icicle in areaMap.icicles[:areaMap.ice_count]:
-        _fillRectangle(grid, ICICLE_CHANNELS[_toInt(icicle.type)], icicle.x, icicle.x, icicle.y, icicle.y + 1)
+        fillRectangle(grid, ICICLE_CHANNELS[toInt(icicle.type)], icicle.x, icicle.x, icicle.y, icicle.y + 1)
 
 
 
@@ -509,6 +528,7 @@ def _paintIcicles(grid, areaMap):
 # ---------------------------------
 # mapToTensor
 # ---------------------------------
+
 def mapToTensor (
     level,
     area="overworld",
@@ -536,14 +556,14 @@ def mapToTensor (
     width = width or areaMap.boundary_right // BOUNDARY_UNITS_PER_TILE
     grid = torch.zeros((NUM_CH, height, width), dtype=dtype)
 
-    _paintLiquid(grid, areaMap)
-    _paintInBounds(grid, areaMap)
-    _paintTerrain(grid, level, areaMap, area, includeImplicitGround)
+    paintLiquid(grid, areaMap)
+    paintInBounds(grid, areaMap)
+    paintTerrain(grid, level, areaMap, area, includeImplicitGround)
 
     night = areaMap.unk_flag == 1  # Night mode, same test as levelToInput
 
     for obj in areaMap.objects[:areaMap.object_count]:
-        objectId = _toInt(obj.id)
+        objectId = toInt(obj.id)
         if not 0 <= objectId < NUM_OBJS or objectId in SKIP_IN_OBJECTS:
             continue
 
@@ -555,22 +575,22 @@ def mapToTensor (
             direction = OBJECT_PIPE_DIRECTIONS.get(obj.flag & PIPE_FLAG_MASK)
             if direction is None:
                 continue
-            _fillRectangle(grid, channels, *_pipeCells(anchorCol, anchorRow, objHeight, direction))
+            fillRectangle(grid, channels, *pipeCells(anchorCol, anchorRow, objHeight, direction))
         elif objectId == CLAW:  # 3 wide, 5 tall, hanging down from Y
-            _fillRectangle(grid, channels, anchorCol - 1, anchorCol + 1, anchorRow - 4, anchorRow)
+            fillRectangle(grid, channels, anchorCol - 1, anchorCol + 1, anchorRow - 4, anchorRow)
         elif objectId in SLOPES:  # Surface diagonal only, one cell per column
             ascending = ((obj.flag >> SLOPE_FALLING_BIT) & 1) == 0
             for offset in range(objWidth):
                 row = anchorRow + ((offset if ascending else objWidth - 1 - offset) * objHeight) // objWidth
-                _fillRectangle(grid, channels, anchorCol + offset, anchorCol + offset, row, row)
+                fillRectangle(grid, channels, anchorCol + offset, anchorCol + offset, row, row)
         elif objectId in LEFT_ANCHORED:
-            _fillRectangle(grid, channels, anchorCol, anchorCol + objWidth - 1, anchorRow, anchorRow + objHeight - 1)
+            fillRectangle(grid, channels, anchorCol, anchorCol + objWidth - 1, anchorRow, anchorRow + objHeight - 1)
         else:  # X is the horizontal center, Y the bottom row
             colStart = (obj.x - RAW_OFFSET * objWidth) // TILE
-            _fillRectangle(grid, channels, colStart, colStart + objWidth - 1, anchorRow, anchorRow + objHeight - 1)
+            fillRectangle(grid, channels, colStart, colStart + objWidth - 1, anchorRow, anchorRow + objHeight - 1)
 
-    _paintClearPipes(grid, areaMap)
-    _paintIcicles(grid, areaMap)
+    paintClearPipes(grid, areaMap)
+    paintIcicles(grid, areaMap)
 
     return grid
 
@@ -578,9 +598,10 @@ def mapToTensor (
 
 
 # ---------------------------------
-# _oneHot
+# oneHot
 # ---------------------------------
-def _oneHot(size, index):
+
+def oneHot(size, index):
     """
     One-hot float vector
 
@@ -596,9 +617,10 @@ def _oneHot(size, index):
 
 
 # ---------------------------------
-# _nightFlag
+# nightFlag
 # ---------------------------------
-def _nightFlag(areaMap):
+
+def nightFlag(areaMap):
     """
     Night mode as a one-value tensor (1 if night, else 0)
 
@@ -611,9 +633,10 @@ def _nightFlag(areaMap):
 
 
 # ---------------------------------
-# _liquidVector
+# liquidVector
 # ---------------------------------
-def _liquidVector(areaMap):
+
+def liquidVector(areaMap):
     """
     Liquid fields as [start height, end height, 3 mode one-hot slots, speed]
 
@@ -628,9 +651,10 @@ def _liquidVector(areaMap):
 
 
 # ---------------------------------
-# _areaScalars
+# areaScalars
 # ---------------------------------
-def _areaScalars(areaMap, suffix):
+
+def areaScalars(areaMap, suffix):
     """
     The per-area scalar inputs, keyed with a suffix
 
@@ -642,19 +666,20 @@ def _areaScalars(areaMap, suffix):
         Dict of theme, night, liquid, and autoscroll tensors (keys end in the suffix)
     """
     return {
-        f"theme_{suffix}": _oneHot(10, areaMap.theme),
-        f"night_{suffix}": _nightFlag(areaMap),
-        f"liquid_{suffix}": _liquidVector(areaMap),
-        f"autoscroll_{suffix}": _oneHot(5, areaMap.autoscroll_type)
+        f"theme_{suffix}": oneHot(10, areaMap.theme),
+        f"night_{suffix}": nightFlag(areaMap),
+        f"liquid_{suffix}": liquidVector(areaMap),
+        f"autoscroll_{suffix}": oneHot(5, areaMap.autoscroll_type)
     }
 
 
 
 
 # ---------------------------------
-# _clearConditionVector
+# clearConditionVector
 # ---------------------------------
-def _clearConditionVector(level):
+
+def clearConditionVector(level):
     """
     Clear condition as [category one-hot, condition one-hot, magnitude]
 
@@ -673,6 +698,7 @@ def _clearConditionVector(level):
 # ---------------------------------
 # levelToInput
 # ---------------------------------
+
 def levelToInput(level: Level, pad: bool = False):
     """
     Encode a parsed level into the network inputs
@@ -695,9 +721,9 @@ def levelToInput(level: Level, pad: bool = False):
 
     output = {}
     output["ow"] = mapToTensor(level, width=gridWidth)
-    output.update(_areaScalars(level.overworld, "ow"))
-    output["clear_condition"] = _clearConditionVector(level)
-    output["gamestyle"] = _oneHot(5, GAMESTYLES.index(level.gamestyle))
+    output.update(areaScalars(level.overworld, "ow"))
+    output["clear_condition"] = clearConditionVector(level)
+    output["gamestyle"] = oneHot(5, GAMESTYLES.index(level.gamestyle))
     output["timer"] = torch.tensor([level.timer])
 
     for key in ("sw_hor", "sw_vert", "theme_sw", "night_sw", "liquid_sw", "autoscroll_sw"):
@@ -708,6 +734,6 @@ def levelToInput(level: Level, pad: bool = False):
             output["sw_hor"] = mapToTensor(level, "subworld", width=gridWidth)
         else:
             output["sw_vert"] = mapToTensor(level, "subworld", height=gridHeight)
-        output.update(_areaScalars(level.subworld, "sw"))
+        output.update(areaScalars(level.subworld, "sw"))
 
     return output

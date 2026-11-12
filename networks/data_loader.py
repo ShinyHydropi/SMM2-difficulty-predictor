@@ -13,7 +13,8 @@ Each batch is a dict
     - ow: Overworld grid (batch, 12, 27, width)
     - sw_hor: Horizontal subworld grid (batch, 12, 27, width), all zeros if the level has none
     - sw_vert: Vertical subworld grid (batch, 12, height, 48), all zeros if the level has none
-    - scalars: 149 values (overworld 22, subworld 22, clear condition 99, gamestyle 5, timer 1), unnormalized
+    - scalars: 149 values for the padded CNN (overworld 22, subworld 22, clear condition 99, gamestyle 5, timer 1), unnormalized
+    - scalars: the same 149 plus 4 level sizes in tiles (overworld width, overworld height, subworld width, subworld height) for the other three
     - label: Clear rate (batch,)
     - lengths: Dict of ow, sw_hor, sw_vert to the true length per level (width for ow and sw_hor, height for sw_vert)
 """
@@ -33,8 +34,9 @@ from data_processing.encoding import NUM_CH, PADDED_HEIGHT, PADDED_WIDTH, levelT
 # ---------------------------------
 # Constants
 # ---------------------------------
+
 # Files
-DATA_DIR = Path(__file__).resolve().parent.parent/ "data_processing" / "mm2_subset"
+DATA_DIR = Path(__file__).resolve().parent.parent / "data_processing" / "mm2_subset"
 SPLITS = ("train", "val", "test")
 GRIDS_FILE = "grids.bin"
 INDEX_FILE = "index.npz"  # Written last, so its existence marks a finished cache
@@ -52,7 +54,8 @@ SCALAR_PARTS = (
     ("theme_sw", 10), ("night_sw", 1), ("liquid_sw", 6), ("autoscroll_sw", 5),
     ("clear_condition", 99), ("gamestyle", 5), ("timer", 1)
 )
-SCALAR_COUNT = sum(size for _, size in SCALAR_PARTS)  # 149
+BASE_SCALAR_COUNT = sum(size for _, size in SCALAR_PARTS)  # 149
+SIZE_SCALAR_COUNT = 4  # Pre-padding overworld width and height, subworld width and height (tiles), raw networks only
 
 # Batching
 BUCKET_POOL = 50  # Batches' worth of levels sorted by length together
@@ -61,9 +64,10 @@ BUCKET_POOL = 50  # Batches' worth of levels sorted by length together
 
 
 # ---------------------------------
-# _emptyGrids
+# emptyGrids
 # ---------------------------------
-def _emptyGrids(padded):
+
+def emptyGrids(padded):
     """
     All-zero stand-ins for the subworld grids a level doesn't have
 
@@ -81,9 +85,10 @@ def _emptyGrids(padded):
 
 
 # ---------------------------------
-# _encodeRow
+# encodeRow
 # ---------------------------------
-def _encodeRow(row, padded):
+
+def encodeRow(row, padded):
     """
     Encode one dataset row into its grids and scalar vector
 
@@ -93,9 +98,10 @@ def _encodeRow(row, padded):
 
     Returns:
         (grids, scalars) where grids maps ow, sw_hor, sw_vert to float16 arrays and scalars is a float32 vector
+        (149 values, then the 4 level sizes in tiles when padded is False)
     """
     encoded = levelToInput(parse(row), pad=padded)
-    empty = _emptyGrids(padded)
+    empty = emptyGrids(padded)
 
     grids = {"ow": np.asarray(encoded["ow"], dtype=np.float16)}
     for key in ("sw_hor", "sw_vert"):
@@ -110,15 +116,46 @@ def _encodeRow(row, padded):
         value = encoded[key]
         parts.append(np.zeros(size, dtype=np.float32) if value is None else np.asarray(value, dtype=np.float32))
 
+    if not padded:
+        parts.append(np.array(levelSizes(encoded), dtype=np.float32))
+
     return grids, np.concatenate(parts)
 
 
 
 
 # ---------------------------------
-# _cacheDir
+# levelSizes
 # ---------------------------------
-def _cacheDir(dataDir, split, padded):
+
+def levelSizes(encoded):
+    """
+    True (pre-padding) sizes in tiles of the overworld and subworld
+
+    Args:
+        encoded: Output of levelToInput with pad=False
+
+    Returns:
+        [overworld width, overworld height, subworld width, subworld height], subworld zeros if the level has none
+    """
+    overworld = encoded["ow"].shape
+    sizes = [overworld[2], overworld[1], 0, 0]
+
+    for key in ("sw_hor", "sw_vert"):
+        grid = encoded[key]
+        if grid is not None and 0 not in grid.shape:
+            sizes[2], sizes[3] = grid.shape[2], grid.shape[1]
+
+    return sizes
+
+
+
+
+# ---------------------------------
+# getCacheDir
+# ---------------------------------
+
+def getCacheDir(dataDir, split, padded):
     """
     Folder holding one split's cache for one network family
 
@@ -133,9 +170,10 @@ def _cacheDir(dataDir, split, padded):
 
 
 # ---------------------------------
-# _buildCache
+# buildCache
 # ---------------------------------
-def _buildCache(dataDir, split, padded):
+
+def buildCache(dataDir, split, padded):
     """
     Encode a split's Parquet file into grids.bin (flat float16 grids) and index.npz (offsets, shapes, scalars, labels)
 
@@ -147,12 +185,13 @@ def _buildCache(dataDir, split, padded):
     Returns:
         The cache folder
     """
-    cacheDir = _cacheDir(dataDir, split, padded)
+    cacheDir = getCacheDir(dataDir, split, padded)
     cacheDir.mkdir(parents=True, exist_ok=True)
     (cacheDir / INDEX_FILE).unlink(missing_ok=True)  # A half-built cache must not look finished
 
     offsets, shapes, scalars, labels = [], [], [], []
     position, skipped = 0, 0  # Position counts float16 values written so far
+    scalarCount = BASE_SCALAR_COUNT + (0 if padded else SIZE_SCALAR_COUNT)
 
     parquetFile = pq.ParquetFile(dataDir / f"{split}.parquet")
     print(f"Encoding {split} ({'padded' if padded else 'raw'}), {parquetFile.metadata.num_rows} levels (one time only)", flush=True)
@@ -161,7 +200,7 @@ def _buildCache(dataDir, split, padded):
         for batch in parquetFile.iter_batches(batch_size=READ_BATCH, columns=["clears", "attempts", "level_data"]):
             for row in batch.to_pylist():
                 try:
-                    grids, scalarVector = _encodeRow(row, padded)
+                    grids, scalarVector = encodeRow(row, padded)
                 except ValueError:  # Unknown clear condition (UnknownObjectError is a ValueError too)
                     skipped += 1
                     continue
@@ -179,7 +218,7 @@ def _buildCache(dataDir, split, padded):
         cacheDir / INDEX_FILE,
         offsets=np.array(offsets, dtype=np.int64),
         shapes=np.array(shapes, dtype=np.int64).reshape(-1, len(GRID_KEYS), 3),
-        scalars=np.array(scalars, dtype=np.float32).reshape(-1, SCALAR_COUNT),
+        scalars=np.array(scalars, dtype=np.float32).reshape(-1, scalarCount),
         labels=np.array(labels, dtype=np.float32)
     )
     print(f"Cached {len(offsets)} {split} levels (skipped {skipped})", flush=True)
@@ -190,9 +229,10 @@ def _buildCache(dataDir, split, padded):
 
 
 # ---------------------------------
-# _ensureCache
+# ensureCache
 # ---------------------------------
-def _ensureCache(dataDir, split, padded):
+
+def ensureCache(dataDir, split, padded):
     """
     Cache folder for a split, building it first if it's missing or older than the Parquet file
 
@@ -212,12 +252,12 @@ def _ensureCache(dataDir, split, padded):
     if not parquetPath.exists():
         raise FileNotFoundError(f"{parquetPath} not found (run data_processing/build_subset.py first)")
 
-    cacheDir = _cacheDir(dataDir, split, padded)
+    cacheDir = getCacheDir(dataDir, split, padded)
     indexPath = cacheDir / INDEX_FILE
     if indexPath.exists() and indexPath.stat().st_mtime >= parquetPath.stat().st_mtime:
         return cacheDir
 
-    return _buildCache(dataDir, split, padded)
+    return buildCache(dataDir, split, padded)
 
 
 
@@ -225,6 +265,7 @@ def _ensureCache(dataDir, split, padded):
 # ---------------------------------
 # LevelDataset
 # ---------------------------------
+
 class LevelDataset(Dataset):
     """One split's cached levels, read from disk one level at a time"""
 
@@ -262,9 +303,10 @@ class LevelDataset(Dataset):
 
 
 # ---------------------------------
-# _padToLongest
+# padToLongest
 # ---------------------------------
-def _padToLongest(grids):
+
+def padToLongest(grids):
     """
     Stack grids into one batch tensor, zero-padding each to the largest height and width
 
@@ -285,6 +327,7 @@ def _padToLongest(grids):
 # ---------------------------------
 # collate
 # ---------------------------------
+
 def collate(items):
     """
     Combine levels into one batch dict (see the module docstring for the keys)
@@ -292,7 +335,7 @@ def collate(items):
     Args:
         items: List of LevelDataset items
     """
-    batch = {key: _padToLongest([item[key] for item in items]) for key in GRID_KEYS}
+    batch = {key: padToLongest([item[key] for item in items]) for key in GRID_KEYS}
     batch["scalars"] = torch.stack([item["scalars"] for item in items])
     batch["label"] = torch.stack([item["label"] for item in items])
     batch["lengths"] = {
@@ -307,6 +350,7 @@ def collate(items):
 # ---------------------------------
 # BucketBatchSampler
 # ---------------------------------
+
 class BucketBatchSampler(Sampler):
     """
     Batches of similar-length levels (less zero padding per batch)
@@ -346,9 +390,10 @@ class BucketBatchSampler(Sampler):
 
 
 # ---------------------------------
-# _makeLoader
+# makeLoader
 # ---------------------------------
-def _makeLoader(split, padded, batchSize, dataDir, numWorkers):
+
+def makeLoader(split, padded, batchSize, dataDir, numWorkers):
     """
     DataLoader over one split's cache (training shuffles, val and test don't)
 
@@ -359,7 +404,7 @@ def _makeLoader(split, padded, batchSize, dataDir, numWorkers):
         dataDir: Folder with the split Parquet files
         numWorkers: DataLoader worker processes
     """
-    dataset = LevelDataset(_ensureCache(Path(dataDir), split, padded))
+    dataset = LevelDataset(ensureCache(Path(dataDir), split, padded))
     shuffle = split == "train"
 
     if padded:
@@ -374,6 +419,7 @@ def _makeLoader(split, padded, batchSize, dataDir, numWorkers):
 # ---------------------------------
 # loadCnnPadding
 # ---------------------------------
+
 def loadCnnPadding(split, batchSize=32, dataDir=DATA_DIR, numWorkers=0):
     """
     Loader for the padded CNN (every area padded to 12x27x240 horizontal, 12x168x48 vertical)
@@ -384,7 +430,7 @@ def loadCnnPadding(split, batchSize=32, dataDir=DATA_DIR, numWorkers=0):
         dataDir: Folder with the split Parquet files
         numWorkers: DataLoader worker processes
     """
-    return _makeLoader(split, True, batchSize, dataDir, numWorkers)
+    return makeLoader(split, True, batchSize, dataDir, numWorkers)
 
 
 
@@ -392,6 +438,7 @@ def loadCnnPadding(split, batchSize=32, dataDir=DATA_DIR, numWorkers=0):
 # ---------------------------------
 # loadCnnPooling
 # ---------------------------------
+
 def loadCnnPooling(split, batchSize=32, dataDir=DATA_DIR, numWorkers=0):
     """
     Loader for the pooling CNN (each level at its own size, batches zero-padded to the longest level)
@@ -402,7 +449,7 @@ def loadCnnPooling(split, batchSize=32, dataDir=DATA_DIR, numWorkers=0):
         dataDir: Folder with the split Parquet files
         numWorkers: DataLoader worker processes
     """
-    return _makeLoader(split, False, batchSize, dataDir, numWorkers)
+    return makeLoader(split, False, batchSize, dataDir, numWorkers)
 
 
 
@@ -410,6 +457,7 @@ def loadCnnPooling(split, batchSize=32, dataDir=DATA_DIR, numWorkers=0):
 # ---------------------------------
 # loadGru
 # ---------------------------------
+
 def loadGru(split, batchSize=32, dataDir=DATA_DIR, numWorkers=0):
     """
     Loader for the GRU (each level at its own size, batches zero-padded to the longest level)
@@ -420,7 +468,7 @@ def loadGru(split, batchSize=32, dataDir=DATA_DIR, numWorkers=0):
         dataDir: Folder with the split Parquet files
         numWorkers: DataLoader worker processes
     """
-    return _makeLoader(split, False, batchSize, dataDir, numWorkers)
+    return makeLoader(split, False, batchSize, dataDir, numWorkers)
 
 
 
@@ -428,6 +476,7 @@ def loadGru(split, batchSize=32, dataDir=DATA_DIR, numWorkers=0):
 # ---------------------------------
 # loadLstm
 # ---------------------------------
+
 def loadLstm(split, batchSize=32, dataDir=DATA_DIR, numWorkers=0):
     """
     Loader for the LSTM (each level at its own size, batches zero-padded to the longest level)
@@ -438,4 +487,4 @@ def loadLstm(split, batchSize=32, dataDir=DATA_DIR, numWorkers=0):
         dataDir: Folder with the split Parquet files
         numWorkers: DataLoader worker processes
     """
-    return _makeLoader(split, False, batchSize, dataDir, numWorkers)
+    return makeLoader(split, False, batchSize, dataDir, numWorkers)
