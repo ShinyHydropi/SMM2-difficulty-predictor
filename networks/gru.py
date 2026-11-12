@@ -1,11 +1,10 @@
-import networks.data_loader
-import torch
-from torch.utils.data import DataLoader, Dataset, Sampler
+# Imports
+from networks.data_loader import loadGru
 
-dl = networks.data_loader.loadGru("train")
+loader = loadGru("train")
 
 for epoch in range(2):
-    print(f"--- Epoch {epoch+1} ---")
-    for batch_idx, (features, labels) in enumerate(dl):
-        # 'features' shape: [16, 5], 'labels' shape: [16]
-        print(f"Batch {batch_idx}: Features shape {features.shape}, Labels shape {labels.shape}")
+    print(f"--- Epoch {epoch + 1} ---")
+    for batchIndex, batch in enumerate(loader):
+        grid, scalars, labels = batch["ow"], batch["scalars"], batch["label"]  # Grids are (batch, 12, height, longest width in batch)
+        print(f"Batch {batchIndex}: ow {tuple(grid.shape)}, scalars {tuple(scalars.shape)}, labels {tuple(labels.shape)}")
