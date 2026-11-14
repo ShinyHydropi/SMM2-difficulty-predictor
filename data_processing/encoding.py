@@ -421,11 +421,14 @@ def fillRectangle(grid, channels, colStart, colEnd, rowStart, rowEnd):
 def areaSize(areaMap):
     """
     An area's own height and width in tiles (before any padding)
+        - Measured from the bottom and left boundaries (boundary_bottom is above 0 in some vertical subworlds)
 
     Args:
         areaMap: level.overworld or level.subworld
     """
-    return areaMap.boundary_top // BOUNDARY_UNITS_PER_TILE, areaMap.boundary_right // BOUNDARY_UNITS_PER_TILE
+    height = (areaMap.boundary_top - areaMap.boundary_bottom) // BOUNDARY_UNITS_PER_TILE
+    width = (areaMap.boundary_right - areaMap.boundary_left) // BOUNDARY_UNITS_PER_TILE
+    return height, width
 
 
 
@@ -436,14 +439,13 @@ def areaSize(areaMap):
 
 def paintLiquid(grid, areaMap):
     """
-    Paint the LIQUID channel from the area's liquid header fields (inside the area only, padding stays 0)
+    Paint the LIQUID channel from the area's liquid header fields
 
     Args:
-        grid: (channels, height, width) tensor, edited in place
+        grid: The area's canvas from mapToTensor (no padding yet), edited in place
         areaMap: level.overworld or level.subworld
     """
-    height, width = areaSize(areaMap)
-    liquid = grid[Channel.LIQUID, 0:height, 0:width]  # View of the area's own tiles, writes go through to grid
+    liquid = grid[Channel.LIQUID]  # View, writes go through to grid
 
     if areaMap.theme in LIQUID_THEMES:
         if areaMap.liquid_mode == LiquidMode.rising_and_falling:
@@ -464,14 +466,13 @@ def paintLiquid(grid, areaMap):
 
 def paintInBounds(grid, areaMap):
     """
-    Paint IN_BOUNDS on every tile inside the area's boundary (padding stays 0)
+    Paint IN_BOUNDS on every tile of the area (padding, added later, stays 0)
 
     Args:
-        grid: (channels, height, width) tensor, edited in place
+        grid: The area's canvas from mapToTensor (no padding yet), edited in place
         areaMap: level.overworld or level.subworld
     """
-    height, width = areaSize(areaMap)
-    grid[Channel.IN_BOUNDS, 0:height, 0:width] = 1
+    grid[Channel.IN_BOUNDS] = 1
 
 
 
@@ -566,12 +567,14 @@ def mapToTensor (
         dtype: Tensor dtype
 
     Returns:
-        Tensor indexed [channel, y, x], y = 0 at the bottom of the map (flip dim 1 for image orientation)
+        Tensor indexed [channel, y, x], row 0 = the area's bottom boundary (flip dim 1 for image orientation)
     """
     areaMap = getattr(level, area)  # level.overworld or level.subworld
-    ownHeight, ownWidth = areaSize(areaMap)
-    height, width = height or ownHeight, width or ownWidth
-    grid = torch.zeros((NUM_CH, height, width), dtype=dtype)
+
+    # Painting happens on a canvas from tile (0, 0) to the top-right boundary, in the file's own coordinates
+    top = areaMap.boundary_top // BOUNDARY_UNITS_PER_TILE
+    right = areaMap.boundary_right // BOUNDARY_UNITS_PER_TILE
+    grid = torch.zeros((NUM_CH, top, right), dtype=dtype)
 
     paintLiquid(grid, areaMap)
     paintInBounds(grid, areaMap)
@@ -609,7 +612,14 @@ def mapToTensor (
     paintClearPipes(grid, areaMap)
     paintIcicles(grid, areaMap)
 
-    return grid
+    # Cropping to the area (drops rows below boundary_bottom), then zero padding on the top and right
+    bottom = areaMap.boundary_bottom // BOUNDARY_UNITS_PER_TILE
+    left = areaMap.boundary_left // BOUNDARY_UNITS_PER_TILE
+    ownHeight, ownWidth = areaSize(areaMap)
+    output = torch.zeros((NUM_CH, height or ownHeight, width or ownWidth), dtype=dtype)
+    output[:, :ownHeight, :ownWidth] = grid[:, bottom:top, left:right]
+
+    return output
 
 
 
