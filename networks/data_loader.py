@@ -2,21 +2,20 @@
 Network data loaders
     - One loader function per network, all reading the train/val/test Parquet files from build_subset.py
     - Each split is encoded once (encoding.levelToInput) and cached on disk, then streamed from the cache with np.memmap
-    - The cache is rebuilt only when it's missing or older than its Parquet file
+    - The cache is rebuilt when it's missing, older than its Parquet file, or from an older CACHE_VERSION
     - Padded CNN gets every area padded to the max size, the other three get each level at its own size
-    - Raw batches are zero-padded to the longest level in the batch, with the true lengths returned alongside
+    - Raw batches are zero-padded to the longest level in the batch (each level's true size is in its scalars)
     - Label is clears / attempts (0 to 1)
     - Levels the encoder can't handle (unknown clear condition) are skipped and counted
     - Run from the repo root so data_processing and level.py import (python -m networks.<network>)
 
 Each batch is a dict
-    - ow: Overworld grid (batch, 12, 27, width)
-    - sw_hor: Horizontal subworld grid (batch, 12, 27, width), all zeros if the level has none
-    - sw_vert: Vertical subworld grid (batch, 12, height, 48), all zeros if the level has none
-    - scalars: 149 values for the padded CNN (overworld 22, subworld 22, clear condition 99, gamestyle 5, timer 1), unnormalized
-    - scalars: the same 149 plus 4 level sizes in tiles (overworld width, overworld height, subworld width, subworld height) for the other three
+    - overworld: Overworld grid (batch, 12, 27, width)
+    - subworldHorizontal: Horizontal subworld grid (batch, 12, 27, width), all zeros if the level has none
+    - subworldVertical: Vertical subworld grid (batch, 12, height, 48), all zeros if the level has none
+    - scalars: 150 values for the padded CNN (overworld 22, subworld 22, clear condition 99, gamestyle 5, timer 1, autoscroll speed 1), unnormalized
+    - scalars: the same 150 plus 4 true (pre-padding) sizes in tiles for the other three, at SIZE_COLUMNS (subworld sizes are 0 if it has none)
     - label: Clear rate (batch,)
-    - lengths: Dict of ow, sw_hor, sw_vert to the true length per level (width for ow and sw_hor, height for sw_vert)
 """
 
 # Imports
@@ -43,19 +42,23 @@ INDEX_FILE = "index.npz"  # Written last, so its existence marks a finished cach
 READ_BATCH = 256  # Parquet rows read at a time while building a cache
 
 # Grids
-GRID_KEYS = ("ow", "sw_hor", "sw_vert")
-LENGTH_AXIS = {"ow": 2, "sw_hor": 2, "sw_vert": 1}  # Sequence axis of each grid (width, width, height)
+GRID_KEYS = ("overworld", "subworldHorizontal", "subworldVertical")
 HORIZONTAL_HEIGHT = 27  # Every horizontal area is this tall
 VERTICAL_WIDTH = 48  # Every vertical area is this wide
 
 # Scalars (key from levelToInput, size), in the order they're concatenated
 SCALAR_PARTS = (
-    ("theme_ow", 10), ("night_ow", 1), ("liquid_ow", 6), ("autoscroll_ow", 5),
-    ("theme_sw", 10), ("night_sw", 1), ("liquid_sw", 6), ("autoscroll_sw", 5),
-    ("clear_condition", 99), ("gamestyle", 5), ("timer", 1)
+    ("overworldTheme", 10), ("overworldNight", 1), ("overworldLiquid", 6), ("overworldAutoscroll", 5),
+    ("subworldTheme", 10), ("subworldNight", 1), ("subworldLiquid", 6), ("subworldAutoscroll", 5),
+    ("clearCondition", 99), ("gamestyle", 5), ("timer", 1), ("autoscrollSpeed", 1)
 )
-BASE_SCALAR_COUNT = sum(size for _, size in SCALAR_PARTS)  # 149
-SIZE_SCALAR_COUNT = 4  # Pre-padding overworld width and height, subworld width and height (tiles), raw networks only
+BASE_SCALAR_COUNT = sum(size for _, size in SCALAR_PARTS)  # 150, all the padded CNN gets
+SIZE_NAMES = ("overworldWidth", "overworldHeight", "subworldWidth", "subworldHeight")  # Tiles, raw networks only
+SIZE_COLUMNS = {name: BASE_SCALAR_COUNT + offset for offset, name in enumerate(SIZE_NAMES)}  # Ex. scalars[:, SIZE_COLUMNS["overworldWidth"]]
+RAW_SCALAR_COUNT = BASE_SCALAR_COUNT + len(SIZE_NAMES)  # 154
+
+# Cache
+CACHE_VERSION = 3  # Bump whenever the encoding or scalar layout changes (older caches rebuild on next load)
 
 # Batching
 BUCKET_POOL = 50  # Batches' worth of levels sorted by length together
@@ -77,8 +80,8 @@ def emptyGrids(padded):
     width = PADDED_WIDTH if padded else 1
     height = PADDED_HEIGHT if padded else 1
     return {
-        "sw_hor": np.zeros((NUM_CH, HORIZONTAL_HEIGHT, width), dtype=np.float16),
-        "sw_vert": np.zeros((NUM_CH, height, VERTICAL_WIDTH), dtype=np.float16)
+        "subworldHorizontal": np.zeros((NUM_CH, HORIZONTAL_HEIGHT, width), dtype=np.float16),
+        "subworldVertical": np.zeros((NUM_CH, height, VERTICAL_WIDTH), dtype=np.float16)
     }
 
 
@@ -97,14 +100,14 @@ def encodeRow(row, padded):
         padded: True pads grids to the max area size (padded CNN), False keeps each area's own size
 
     Returns:
-        (grids, scalars) where grids maps ow, sw_hor, sw_vert to float16 arrays and scalars is a float32 vector
-        (149 values, then the 4 level sizes in tiles when padded is False)
+        (grids, scalars) where grids maps each GRID_KEYS name to a float16 array and scalars is a float32 vector
+        (150 values, then the 4 level sizes in tiles when padded is False)
     """
     encoded = levelToInput(parse(row), pad=padded)
     empty = emptyGrids(padded)
 
-    grids = {"ow": np.asarray(encoded["ow"], dtype=np.float16)}
-    for key in ("sw_hor", "sw_vert"):
+    grids = {"overworld": np.asarray(encoded["overworld"], dtype=np.float16)}
+    for key in ("subworldHorizontal", "subworldVertical"):
         grid = encoded[key]
         if grid is None or 0 in grid.shape:  # No subworld, or one with no area
             grids[key] = empty[key]
@@ -138,10 +141,10 @@ def levelSizes(encoded):
     Returns:
         [overworld width, overworld height, subworld width, subworld height], subworld zeros if the level has none
     """
-    overworld = encoded["ow"].shape
+    overworld = encoded["overworld"].shape
     sizes = [overworld[2], overworld[1], 0, 0]
 
-    for key in ("sw_hor", "sw_vert"):
+    for key in ("subworldHorizontal", "subworldVertical"):
         grid = encoded[key]
         if grid is not None and 0 not in grid.shape:
             sizes[2], sizes[3] = grid.shape[2], grid.shape[1]
@@ -191,7 +194,7 @@ def buildCache(dataDir, split, padded):
 
     offsets, shapes, scalars, labels = [], [], [], []
     position, skipped = 0, 0  # Position counts float16 values written so far
-    scalarCount = BASE_SCALAR_COUNT + (0 if padded else SIZE_SCALAR_COUNT)
+    scalarCount = BASE_SCALAR_COUNT if padded else RAW_SCALAR_COUNT
 
     parquetFile = pq.ParquetFile(dataDir / f"{split}.parquet")
     print(f"Encoding {split} ({'padded' if padded else 'raw'}), {parquetFile.metadata.num_rows} levels (one time only)", flush=True)
@@ -219,7 +222,8 @@ def buildCache(dataDir, split, padded):
         offsets=np.array(offsets, dtype=np.int64),
         shapes=np.array(shapes, dtype=np.int64).reshape(-1, len(GRID_KEYS), 3),
         scalars=np.array(scalars, dtype=np.float32).reshape(-1, scalarCount),
-        labels=np.array(labels, dtype=np.float32)
+        labels=np.array(labels, dtype=np.float32),
+        version=np.array(CACHE_VERSION)
     )
     print(f"Cached {len(offsets)} {split} levels (skipped {skipped})", flush=True)
 
@@ -234,7 +238,7 @@ def buildCache(dataDir, split, padded):
 
 def ensureCache(dataDir, split, padded):
     """
-    Cache folder for a split, building it first if it's missing or older than the Parquet file
+    Cache folder for a split, building it first if it's missing, older than the Parquet file, or an older version
 
     Args:
         dataDir: Folder with the split Parquet files
@@ -255,7 +259,9 @@ def ensureCache(dataDir, split, padded):
     cacheDir = getCacheDir(dataDir, split, padded)
     indexPath = cacheDir / INDEX_FILE
     if indexPath.exists() and indexPath.stat().st_mtime >= parquetPath.stat().st_mtime:
-        return cacheDir
+        with np.load(indexPath) as index:
+            if "version" in index and int(index["version"]) == CACHE_VERSION:
+                return cacheDir
 
     return buildCache(dataDir, split, padded)
 
@@ -275,7 +281,7 @@ class LevelDataset(Dataset):
         self.shapes = index["shapes"]
         self.scalars = index["scalars"]
         self.labels = index["labels"]
-        self.lengths = self.shapes[:, 0, LENGTH_AXIS["ow"]]  # Overworld width per level (bucketing key)
+        self.overworldWidths = self.shapes[:, 0, 2]  # Bucketing key
         self.gridsPath = cacheDir / GRIDS_FILE
         self.grids = None  # Opened on first read (each DataLoader worker needs its own handle)
 
@@ -338,9 +344,6 @@ def collate(items):
     batch = {key: padToLongest([item[key] for item in items]) for key in GRID_KEYS}
     batch["scalars"] = torch.stack([item["scalars"] for item in items])
     batch["label"] = torch.stack([item["label"] for item in items])
-    batch["lengths"] = {
-        key: torch.tensor([item[key].shape[LENGTH_AXIS[key]] for item in items]) for key in GRID_KEYS
-    }
 
     return batch
 
@@ -410,7 +413,7 @@ def makeLoader(split, padded, batchSize, dataDir, numWorkers):
     if padded:
         return DataLoader(dataset, batch_size=batchSize, shuffle=shuffle, collate_fn=collate, num_workers=numWorkers)
 
-    sampler = BucketBatchSampler(dataset.lengths, batchSize, shuffle)
+    sampler = BucketBatchSampler(dataset.overworldWidths, batchSize, shuffle)
     return DataLoader(dataset, batch_sampler=sampler, collate_fn=collate, num_workers=numWorkers)
 
 

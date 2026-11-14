@@ -45,11 +45,11 @@ class WorldBlock(nn.Module):
         return self.net(x)
 
 class LevelGRU(nn.Module):
-    def __init__(self, gru_hidden_size = 32, fc_hidden_size = 256, scalar_inputs = 152):
+    def __init__(self, gru_hidden_size = 32, fc_hidden_size = 256, scalar_inputs = networks.data_loader.RAW_SCALAR_COUNT):
         super().__init__()
         self.overworld = WorldBlock(hidden_size=gru_hidden_size)
-        self.subworld_hor = WorldBlock(hidden_size=gru_hidden_size)
-        self.subworld_vert = WorldBlock(hidden_size=gru_hidden_size, vertical=True)
+        self.subworld_horizontal = WorldBlock(hidden_size=gru_hidden_size)
+        self.subworld_vertical = WorldBlock(hidden_size=gru_hidden_size, vertical=True)
         self.fc_layers = nn.Sequential(
             nn.Linear(in_features=gru_hidden_size * 3 + scalar_inputs, out_features=fc_hidden_size),
             nn.ReLU(),
@@ -58,23 +58,23 @@ class LevelGRU(nn.Module):
         )
 
     def forward(self, x, device):
-        ow = self.overworld(x["ow"].to(device))[0][:, -1, :]
-        sw_hor = torch.zeros_like(ow)
-        has_sw_hor = x["lengths"]["sw_hor"] != 1
-        sw_hor[has_sw_hor, :] = self.subworld_hor(x["sw_hor"][has_sw_hor, :, :, :].to(device))[0][:, -1, :]
-        sw_vert = torch.zeros_like(ow)
-        has_sw_vert = x["lengths"]["sw_vert"] != 1
-        sw_vert[has_sw_vert, :] = self.subworld_vert(x["sw_vert"][has_sw_vert, :, :, :].to(device))[0][:, -1, :]
-        scalars = torch.cat((x["scalars"].to(device), ow, sw_hor, sw_vert), dim=1)
+        overworld = self.overworld(x["overworld"].to(device))[0][:, -1, :]
+        subworld_horizontal = torch.zeros_like(overworld)
+        has_subworld_horizontal = x["subworldHorizontal"].flatten(1).any(1)  # A missing subworld is all zeros
+        subworld_horizontal[has_subworld_horizontal, :] = self.subworld_horizontal(x["subworldHorizontal"][has_subworld_horizontal, :, :, :].to(device))[0][:, -1, :]
+        subworld_vertical = torch.zeros_like(overworld)
+        has_subworld_vertical = x["subworldVertical"].flatten(1).any(1)
+        subworld_vertical[has_subworld_vertical, :] = self.subworld_vertical(x["subworldVertical"][has_subworld_vertical, :, :, :].to(device))[0][:, -1, :]
+        scalars = torch.cat((x["scalars"].to(device), overworld, subworld_horizontal, subworld_vertical), dim=1)
         return self.fc_layers(scalars).reshape(-1)
 
-level_net = LevelGRU(gru_hidden_size=32, fc_hidden_size=256, scalar_inputs = 149).to(device=device)
+level_net = LevelGRU(gru_hidden_size=32, fc_hidden_size=256).to(device=device)
 
-dl = networks.data_loader.loadGru("train")
+loader = networks.data_loader.loadGru("train")
 
 for epoch in range(2):
     print(f"--- Epoch {epoch+1} ---")
-    for batch_idx, batch in enumerate(dl):
+    for batch_idx, batch in enumerate(loader):
         print(f"Batch {batch_idx}: {level_net(batch, device=device)}")
         print(batch["label"].to(device=device))
         quit()

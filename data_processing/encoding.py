@@ -49,7 +49,7 @@ PADDED_HEIGHT = 168  # Tallest area (vertical), padded CNN only
 PADDED_WIDTH = 240  # Widest area (horizontal), padded CNN only
 
 PIPE, CLEAR_PIPE, CLAW, ICICLE = 9, 93, 105, 118  # Object IDs with their own footprint rules
-LEFT_ANCHORED = {14, 16, 71, 17, 53, 94}  # X is the leftmost tile, Y the bottom row
+LEFT_ANCHORED = {14, 16, 17, 53, 71, 94, 110}  # X is the leftmost tile, Y the bottom row
 SLOPES = {87, 88}
 SKIP_IN_OBJECTS = {CLEAR_PIPE, ICICLE}  # Taken from the clear_pipes and icicles arrays instead
 PIPE_FLAG_MASK = 0x7F  # Keeps the direction bits, drops the rest of the flag
@@ -204,7 +204,6 @@ Channels for elements stored outside the objects array
     - Icicle type 0 falls, type 1 is solid (Course Format.md)
 """
 GROUND_TILE_CHANNELS = frozenset({Channel.SOLID})
-TRACK_TILE_CHANNELS = frozenset({Channel.MOVEMENT})
 CLEAR_PIPE_CHANNELS = frozenset({Channel.SOLID, Channel.INTERACTIVE})
 ICICLE_CHANNELS = {
     0: frozenset({Channel.HAZARD}),
@@ -416,26 +415,45 @@ def fillRectangle(grid, channels, colStart, colEnd, rowStart, rowEnd):
 
 
 # ---------------------------------
+# areaSize
+# ---------------------------------
+
+def areaSize(areaMap):
+    """
+    An area's own height and width in tiles (before any padding)
+
+    Args:
+        areaMap: level.overworld or level.subworld
+    """
+    return areaMap.boundary_top // BOUNDARY_UNITS_PER_TILE, areaMap.boundary_right // BOUNDARY_UNITS_PER_TILE
+
+
+
+
+# ---------------------------------
 # paintLiquid
 # ---------------------------------
 
 def paintLiquid(grid, areaMap):
     """
-    Paint the LIQUID channel from the area's liquid header fields
+    Paint the LIQUID channel from the area's liquid header fields (inside the area only, padding stays 0)
 
     Args:
         grid: (channels, height, width) tensor, edited in place
         areaMap: level.overworld or level.subworld
     """
+    height, width = areaSize(areaMap)
+    liquid = grid[Channel.LIQUID, 0:height, 0:width]  # View of the area's own tiles, writes go through to grid
+
     if areaMap.theme in LIQUID_THEMES:
         if areaMap.liquid_mode == LiquidMode.rising_and_falling:
-            grid[Channel.LIQUID, 0:areaMap.liquid_start_height, :] = 0.5
-            grid[Channel.LIQUID, 0:areaMap.liquid_end_height, :] += 0.5  # 1 below both heights, 0.5 between them
+            liquid[0:areaMap.liquid_start_height, :] = 0.5
+            liquid[0:areaMap.liquid_end_height, :] += 0.5  # 1 below both heights, 0.5 between them
         else:
-            grid[Channel.LIQUID, 0:areaMap.liquid_end_height, :] = 1
+            liquid[0:areaMap.liquid_end_height, :] = 1
 
     if areaMap.theme == Theme.underwater:
-        grid[Channel.LIQUID, :, :] = 1  # Every tile is water
+        liquid[:, :] = 1  # Every tile is water
 
 
 
@@ -452,9 +470,8 @@ def paintInBounds(grid, areaMap):
         grid: (channels, height, width) tensor, edited in place
         areaMap: level.overworld or level.subworld
     """
-    top = areaMap.boundary_top // BOUNDARY_UNITS_PER_TILE
-    right = areaMap.boundary_right // BOUNDARY_UNITS_PER_TILE
-    grid[Channel.IN_BOUNDS, 0:top, 0:right] = 1
+    height, width = areaSize(areaMap)
+    grid[Channel.IN_BOUNDS, 0:height, 0:width] = 1
 
 
 
@@ -552,8 +569,8 @@ def mapToTensor (
         Tensor indexed [channel, y, x], y = 0 at the bottom of the map (flip dim 1 for image orientation)
     """
     areaMap = getattr(level, area)  # level.overworld or level.subworld
-    height = height or areaMap.boundary_top // BOUNDARY_UNITS_PER_TILE
-    width = width or areaMap.boundary_right // BOUNDARY_UNITS_PER_TILE
+    ownHeight, ownWidth = areaSize(areaMap)
+    height, width = height or ownHeight, width or ownWidth
     grid = torch.zeros((NUM_CH, height, width), dtype=dtype)
 
     paintLiquid(grid, areaMap)
@@ -654,22 +671,22 @@ def liquidVector(areaMap):
 # areaScalars
 # ---------------------------------
 
-def areaScalars(areaMap, suffix):
+def areaScalars(areaMap, area):
     """
-    The per-area scalar inputs, keyed with a suffix
+    The per-area scalar inputs, keyed by area
 
     Args:
         areaMap: level.overworld or level.subworld
-        suffix: "ow" or "sw"
+        area: "overworld" or "subworld"
 
     Returns:
-        Dict of theme, night, liquid, and autoscroll tensors (keys end in the suffix)
+        Dict of theme, night, liquid, and autoscroll tensors (ex. overworldTheme, subworldLiquid)
     """
     return {
-        f"theme_{suffix}": oneHot(10, areaMap.theme),
-        f"night_{suffix}": nightFlag(areaMap),
-        f"liquid_{suffix}": liquidVector(areaMap),
-        f"autoscroll_{suffix}": oneHot(5, areaMap.autoscroll_type)
+        f"{area}Theme": oneHot(10, areaMap.theme),
+        f"{area}Night": nightFlag(areaMap),
+        f"{area}Liquid": liquidVector(areaMap),
+        f"{area}Autoscroll": oneHot(5, areaMap.autoscroll_type)
     }
 
 
@@ -696,6 +713,22 @@ def clearConditionVector(level):
 
 
 # ---------------------------------
+# hasContent
+# ---------------------------------
+
+def hasContent(areaMap):
+    """
+    True if an area holds anything (an unused subworld is still in the file, with no objects, ground tiles, or tracks)
+
+    Args:
+        areaMap: level.overworld, level.subworld, or None
+    """
+    return areaMap is not None and areaMap.object_count + areaMap.ground_count + areaMap.track_count > 0
+
+
+
+
+# ---------------------------------
 # levelToInput
 # ---------------------------------
 
@@ -709,10 +742,10 @@ def levelToInput(level: Level, pad: bool = False):
 
     Returns:
         Dict of tensors
-            - ow: Overworld grid (12, height, width)
-            - sw_hor, sw_vert: Subworld grid for its orientation, None when the subworld is absent or the other orientation
-            - theme_*, night_*, liquid_*, autoscroll_*: Per-area scalars, suffix ow or sw (sw is None when absent)
-            - clear_condition, gamestyle, timer: Per-level scalars
+            - overworld: Overworld grid (12, height, width)
+            - subworldHorizontal, subworldVertical: Subworld grid for its orientation, None when the subworld is unused or the other orientation
+            - overworldTheme, overworldNight, overworldLiquid, overworldAutoscroll: Per-area scalars (subworld ones are None when it's unused)
+            - clearCondition, gamestyle, timer, autoscrollSpeed: Per-level scalars
     """
     gridHeight, gridWidth = None, None
     if pad:
@@ -720,20 +753,21 @@ def levelToInput(level: Level, pad: bool = False):
         gridWidth = PADDED_WIDTH
 
     output = {}
-    output["ow"] = mapToTensor(level, width=gridWidth)
-    output.update(areaScalars(level.overworld, "ow"))
-    output["clear_condition"] = clearConditionVector(level)
+    output["overworld"] = mapToTensor(level, width=gridWidth)
+    output.update(areaScalars(level.overworld, "overworld"))
+    output["clearCondition"] = clearConditionVector(level)
     output["gamestyle"] = oneHot(5, GAMESTYLES.index(level.gamestyle))
     output["timer"] = torch.tensor([level.timer])
+    output["autoscrollSpeed"] = torch.tensor([toInt(level.autoscroll_speed)])  # 0 to 2 (x1, x2, x3)
 
-    for key in ("sw_hor", "sw_vert", "theme_sw", "night_sw", "liquid_sw", "autoscroll_sw"):
+    for key in ("subworldHorizontal", "subworldVertical", "subworldTheme", "subworldNight", "subworldLiquid", "subworldAutoscroll"):
         output[key] = None
 
-    if level.subworld is not None:
+    if hasContent(level.subworld):  # An unused subworld stays None (all zeros in the loader)
         if level.subworld.orientation == Orientation.horizontal:
-            output["sw_hor"] = mapToTensor(level, "subworld", width=gridWidth)
+            output["subworldHorizontal"] = mapToTensor(level, "subworld", width=gridWidth)
         else:
-            output["sw_vert"] = mapToTensor(level, "subworld", height=gridHeight)
-        output.update(areaScalars(level.subworld, "sw"))
+            output["subworldVertical"] = mapToTensor(level, "subworld", height=gridHeight)
+        output.update(areaScalars(level.subworld, "subworld"))
 
     return output

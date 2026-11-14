@@ -13,3 +13,5 @@ dist/
 .ipynb_checkpoints/
 
 *.bcd
+# Encoded tensor cache (rebuilt by networks/data_loader.py)
+data_processing/mm2_subset/cache/

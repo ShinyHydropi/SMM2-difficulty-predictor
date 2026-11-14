@@ -524,7 +524,7 @@ def showMap(index=1):
     from datasets import load_dataset
 
     row = next(islice(iter(load_dataset(DATASET, streaming=True, split="train")), index - 1, None))
-    solid = levelToInput(parse(row))["ow"][0]  # Overworld grid, channel 0 is SOLID
+    solid = levelToInput(parse(row))["overworld"][0]  # Overworld grid, channel 0 is SOLID
     for gridRow in reversed(solid):
         print("".join("██" if tile > 0 else "  " for tile in gridRow))
 
