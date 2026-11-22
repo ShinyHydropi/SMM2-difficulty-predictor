@@ -73,4 +73,4 @@ def evaluate_model(network, loader, device):
     ss_res = torch.sum((labs - preds) ** 2)
     ss_tot = torch.sum((preds - preds.mean()) ** 2)
     r2 = 1 - ss_res / ss_tot
-    return losses, r2
+    return losses, r2.item()
