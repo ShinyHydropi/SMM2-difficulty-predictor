@@ -2,6 +2,7 @@ import networks.data_loader
 import torch
 import torch.nn as nn
 import random
+from networks.training_utils import train_network
 
 if torch.cuda.is_available():
     gpu_index = torch.randint(0, torch.cuda.device_count(), (1,)).item()
@@ -68,13 +69,15 @@ class LevelGRU(nn.Module):
         scalars = torch.cat((x["scalars"].to(device), overworld, subworld_horizontal, subworld_vertical), dim=1)
         return self.fc_layers(scalars).reshape(-1)
 
-level_net = LevelGRU(gru_hidden_size=32, fc_hidden_size=256).to(device=device)
+    @staticmethod
+    def name():
+        return "LevelGRU"
 
-loader = networks.data_loader.loadGru("train")
+for lr in [1e-3, 1e-4, 1e-5]:
+    fix_random_seed(444)
 
-for epoch in range(2):
-    print(f"--- Epoch {epoch+1} ---")
-    for batch_idx, batch in enumerate(loader):
-        print(f"Batch {batch_idx}: {level_net(batch, device=device)}")
-        print(batch["label"].to(device=device))
-        quit()
+    level_net = LevelGRU(gru_hidden_size=32, fc_hidden_size=256).to(device=device)
+    loader = networks.data_loader.loadGru("train")
+    valid = networks.data_loader.loadGru("val")
+
+    train_network(level_net, loader, valid, device, lr = lr)
