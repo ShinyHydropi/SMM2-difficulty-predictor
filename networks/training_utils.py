@@ -12,6 +12,10 @@ def train_network(network, loader, validation, device, epochs=60, lr=1e-3):
     val_loss_history = []
     r2_scores = []
 
+    best_val_loss = float("inf")
+    best_epoch = -1
+    checkpoint_path = f"{network.name()}_{epochs}_{lr}.pt"
+
     for epoch in range(epochs):
         batch_loss = []
         for batch_idx, batch in enumerate(loader):
@@ -26,19 +30,29 @@ def train_network(network, loader, validation, device, epochs=60, lr=1e-3):
         val_loss_history.append(np.mean(losses))
         r2_scores.append(r2)
 
+        if val_loss_history[-1] < best_val_loss:  # new
+            best_val_loss = val_loss_history[-1]
+            best_epoch = epoch
+            torch.save(network.state_dict(), checkpoint_path)
+
         print(
             f"(Epoch {epoch} / {epochs}) training loss: {train_loss_history[-1]:.4f}, validation loss: {val_loss_history[-1]:.4f}, validation R^2: {r2:.4f}")
     print()
 
+    plt.figure()
     plt.plot(train_loss_history)
     plt.plot(val_loss_history)
     plt.xlabel("Epoch")
     plt.ylabel("Loss")
     plt.title("Loss history")
+    plt.legend(["Train", "Validation"], loc="upper right")
     plt.savefig(f"{network.name()}_{epochs}_{lr}.png", dpi=300, bbox_inches="tight")
-    plt.show()
+    plt.close()
 
     results = {
+        "best epoch": best_epoch,
+        "best validation loss": best_val_loss,
+        "best validation R^2": r2_scores[best_epoch],
         "final train loss": train_loss_history[-1],
         "final validation loss": val_loss_history[-1],
         "final validation R^2": r2_scores[-1],
@@ -71,6 +85,6 @@ def evaluate_model(network, loader, device):
             labs = torch.cat((labs, label), dim=0)
 
     ss_res = torch.sum((labs - preds) ** 2)
-    ss_tot = torch.sum((preds - preds.mean()) ** 2)
+    ss_tot = torch.sum((labs - labs.mean()) ** 2)
     r2 = 1 - ss_res / ss_tot
     return losses, r2.item()
