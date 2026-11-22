@@ -1,6 +1,7 @@
 import networks.data_loader
 import torch
 import torch.nn as nn
+from torch.nn.utils.rnn import pack_padded_sequence
 import random
 from networks.training_utils import train_network
 
@@ -18,6 +19,9 @@ def fix_random_seed(seed_no=0):
     torch.cuda.manual_seed(seed_no)
     random.seed(seed_no)
 
+def pooled(n):
+    return (n - 1) // 2 + 1
+
 class Permute(nn.Module):
     def __init__(self, *dims):
         super().__init__()
@@ -27,11 +31,11 @@ class Permute(nn.Module):
         return x.permute(*self.dims)
 
 class WorldBlock(nn.Module):
-    def __init__(self, hidden_size = 32, vertical = False):
+    def __init__(self, hidden_size = 64, vertical = False):
         super().__init__()
         permutation = Permute(0, 2, 1, 3) if vertical else Permute(0, 3, 1, 2)
         flat_dim_magnitude = 12 if vertical else 7
-        self.net = nn.Sequential(
+        self.conv = nn.Sequential(
             nn.Conv2d(in_channels=12, out_channels=16, kernel_size=3, padding=1),
             nn.ReLU(),
             nn.MaxPool2d(kernel_size=3, stride=2, padding=1),
@@ -39,14 +43,17 @@ class WorldBlock(nn.Module):
             nn.ReLU(),
             nn.MaxPool2d(kernel_size=3, stride=2, padding=1),
             permutation,
-            nn.Flatten(-2, -1),
-            nn.GRU(input_size=16 * flat_dim_magnitude, hidden_size=hidden_size, batch_first=True)
+            nn.Flatten(-2, -1)
         )
-    def forward(self, x):
-        return self.net(x)
+        self.gru = nn.GRU(input_size=16 * flat_dim_magnitude, hidden_size=hidden_size, batch_first=True)
+    def forward(self, x, lengths):
+        seq = self.conv(x)
+        lengths = pooled(pooled(lengths.long()))
+        packed = pack_padded_sequence(seq, lengths.cpu(), batch_first=True, enforce_sorted=False)
+        return self.gru(packed)[1][-1]
 
 class LevelGRU(nn.Module):
-    def __init__(self, gru_hidden_size = 32, fc_hidden_size = 256, scalar_inputs = networks.data_loader.RAW_SCALAR_COUNT):
+    def __init__(self, gru_hidden_size = 64, fc_hidden_size = 256, scalar_inputs = networks.data_loader.RAW_SCALAR_COUNT):
         super().__init__()
         self.overworld = WorldBlock(hidden_size=gru_hidden_size)
         self.subworld_horizontal = WorldBlock(hidden_size=gru_hidden_size)
@@ -59,25 +66,43 @@ class LevelGRU(nn.Module):
         )
 
     def forward(self, x, device):
-        overworld = self.overworld(x["overworld"].to(device))[0][:, -1, :]
+        cols = networks.data_loader.SIZE_COLUMNS
+        sizes = x["scalars"]
+
+        has_h = x["subworldHorizontal"].flatten(1).any(1)
+        has_v = x["subworldVertical"].flatten(1).any(1)
+
+        overworld = self.overworld(
+            x["overworld"].to(device),
+            sizes[:, cols["overworldWidth"]],
+        )
+
         subworld_horizontal = torch.zeros_like(overworld)
-        has_subworld_horizontal = x["subworldHorizontal"].flatten(1).any(1)  # A missing subworld is all zeros
-        subworld_horizontal[has_subworld_horizontal, :] = self.subworld_horizontal(x["subworldHorizontal"][has_subworld_horizontal, :, :, :].to(device))[0][:, -1, :]
+        if has_h.any():
+            subworld_horizontal[has_h] = self.subworld_horizontal(
+                x["subworldHorizontal"][has_h].to(device),
+                sizes[has_h, cols["subworldWidth"]],
+            )
+
         subworld_vertical = torch.zeros_like(overworld)
-        has_subworld_vertical = x["subworldVertical"].flatten(1).any(1)
-        subworld_vertical[has_subworld_vertical, :] = self.subworld_vertical(x["subworldVertical"][has_subworld_vertical, :, :, :].to(device))[0][:, -1, :]
-        scalars = torch.cat((x["scalars"].to(device), overworld, subworld_horizontal, subworld_vertical), dim=1)
-        return self.fc_layers(scalars).reshape(-1)
+        if has_v.any():
+            subworld_vertical[has_v] = self.subworld_vertical(
+                x["subworldVertical"][has_v].to(device),
+                sizes[has_v, cols["subworldHeight"]],
+            )
+
+        features = torch.cat((x["scalars"].to(device), overworld, subworld_horizontal, subworld_vertical), dim=1)
+        return self.fc_layers(features).reshape(-1)
 
     @staticmethod
     def name():
         return "LevelGRU"
 
-for lr in [1e-3, 1e-4, 1e-5]:
+for lr, epochs in [(1e-3, 100), (1e-4, 200)]:
     fix_random_seed(444)
 
-    level_net = LevelGRU(gru_hidden_size=32, fc_hidden_size=256).to(device=device)
+    level_net = LevelGRU().to(device=device)
     loader = networks.data_loader.loadGru("train")
     valid = networks.data_loader.loadGru("val")
 
-    train_network(level_net, loader, valid, device, lr = lr)
+    train_network(level_net, loader, valid, device, epochs = epochs, lr = lr)
